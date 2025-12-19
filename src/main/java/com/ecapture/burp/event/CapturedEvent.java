@@ -54,6 +54,14 @@ public class CapturedEvent {
         public boolean isResponse() {
             return this == HTTP1_RESPONSE || this == HTTP2_RESPONSE || this == AUTO_RESPONSE;
         }
+
+        public boolean isHttp2Request() {
+            return this == HTTP2_REQUEST;
+        }
+
+        public boolean isHttp2Response() {
+            return this == HTTP2_RESPONSE;
+        }
     }
     
     private final long timestamp;
@@ -81,7 +89,6 @@ public class CapturedEvent {
         this.pid = pid;
         this.processName = processName;
         this.length = length;
-        this.payload = payload;
         this.receivedAt = System.currentTimeMillis();
         
         // Auto-detect event type if UNKNOWN (type=0)
@@ -90,6 +97,13 @@ public class CapturedEvent {
             detectedType = detectEventType(payload);
         }
         this.eventType = detectedType;
+        if (this.eventType.isHttp2Request()) {
+            this.payload = Http2FrameConverter.framesToHttp2Request(payload);
+        } else if (this.eventType.isHttp2Response()) {
+            this.payload = Http2FrameConverter.framesToHttp2Response(payload);
+        } else {
+            this.payload = payload;
+        }
     }
     
     /**
@@ -104,7 +118,7 @@ public class CapturedEvent {
         
         // Check for HTTP response (starts with "HTTP/")
         if (start.startsWith("HTTP/")) {
-            return EventType.AUTO_RESPONSE;
+            return EventType.HTTP1_REQUEST;
         }
         
         // Check for HTTP request methods
@@ -117,15 +131,15 @@ public class CapturedEvent {
             start.startsWith("PATCH ") ||
             start.startsWith("CONNECT ") ||
             start.startsWith("TRACE ")) {
-            return EventType.AUTO_REQUEST;
+            return EventType.HTTP1_RESPONSE;
         }
         
         // Check for HTTP/2 pseudo headers (requests often start with these in text form)
         if (start.contains(":method") || start.contains(":path") || start.contains(":authority")) {
-            return EventType.AUTO_REQUEST;
+            return EventType.HTTP2_REQUEST;
         }
         if (start.contains(":status")) {
-            return EventType.AUTO_RESPONSE;
+            return EventType.HTTP2_RESPONSE;
         }
         
         return EventType.UNKNOWN;
