@@ -23,6 +23,13 @@ dependencies {
     
     // Protobuf runtime (for parsing)
     implementation 'com.google.protobuf:protobuf-java:3.25.1'
+
+    // Gson for JSON/HAR serialization
+    implementation 'com.google.code.gson:gson:2.10.1'
+
+    // Apache POI for Excel export
+    implementation 'org.apache.poi:poi:5.2.3'
+    implementation 'org.apache.poi:poi-ooxml:5.2.3'
 }
 
 jar {

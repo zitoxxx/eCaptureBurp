@@ -13,6 +13,8 @@ import com.ecapture.burp.event.CapturedEvent;
 import com.ecapture.burp.event.EventManager;
 import com.ecapture.burp.event.MatchedHttpPair;
 import com.ecapture.burp.websocket.ECaptureWebSocketClient;
+import com.ecapture.burp.export.ExportManager;
+import com.ecapture.burp.ui.ColumnSelectorDialog;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -20,6 +22,9 @@ import javax.swing.border.TitledBorder;
 import javax.swing.table.DefaultTableModel;
 import javax.swing.table.TableRowSorter;
 import java.awt.*;
+import java.io.File;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.regex.Pattern;
 
@@ -53,10 +58,12 @@ public class ECaptureTab {
     private HttpResponseEditor responseEditor;
     
     private ECaptureContextMenuProvider contextMenuProvider;
-    
-    // Table columns
+    private final com.ecapture.burp.export.ExportManager exportManager = new com.ecapture.burp.export.ExportManager();
+    private java.util.List<String> exportColumns = new java.util.ArrayList<>();
+
+    // Table columns (add Protocol column)
     private static final String[] COLUMN_NAMES = {
-            "#", "Time", "Method", "Host", "URL", "Status", "Req Len", "Resp Len", "Process", "Complete"
+            "#", "Time", "Proto", "Method", "Host", "URL", "Status", "Req Len", "Resp Len", "Process", "Complete"
     };
     
     // Map pair ID to table row index for updates
@@ -67,7 +74,8 @@ public class ECaptureTab {
         this.logging = api.logging();
         this.wsClient = wsClient;
         this.eventManager = eventManager;
-        
+        exportColumns.addAll(java.util.Arrays.asList(COLUMN_NAMES));
+
         initializeUI();
         setupListeners();
         
@@ -164,6 +172,26 @@ public class ECaptureTab {
         });
         searchPanel.add(clearFilterButton);
         
+        // Add export controls to search panel
+        JButton columnSelectButton = new JButton("Choose Columns");
+        columnSelectButton.addActionListener(e -> {
+            ColumnSelectorDialog dlg = new ColumnSelectorDialog(SwingUtilities.getWindowAncestor(mainPanel), exportColumns, COLUMN_NAMES);
+            dlg.setVisible(true);
+            java.util.List<String> selected = dlg.getSelectedColumns();
+            if (selected != null && !selected.isEmpty()) {
+                exportColumns = new java.util.ArrayList<>(selected);
+            }
+        });
+        searchPanel.add(columnSelectButton);
+
+        JButton exportHarButton = new JButton("Export HAR");
+        exportHarButton.addActionListener(e -> onExportHarClicked());
+        searchPanel.add(exportHarButton);
+
+        JButton exportCsvButton = new JButton("Export CSV");
+        exportCsvButton.addActionListener(e -> onExportCsvClicked());
+        searchPanel.add(exportCsvButton);
+
         panel.add(searchPanel, BorderLayout.NORTH);
         
         // Table
@@ -175,21 +203,23 @@ public class ECaptureTab {
         };
         
         eventTable = new JTable(tableModel);
-        eventTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        // Allow multiple selection so user can select multiple rows to export
+        eventTable.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
         eventTable.setAutoResizeMode(JTable.AUTO_RESIZE_SUBSEQUENT_COLUMNS);
         
         // Set column widths
         eventTable.getColumnModel().getColumn(0).setPreferredWidth(40);  // #
         eventTable.getColumnModel().getColumn(1).setPreferredWidth(120); // Time
-        eventTable.getColumnModel().getColumn(2).setPreferredWidth(60);  // Method
-        eventTable.getColumnModel().getColumn(3).setPreferredWidth(150); // Host
-        eventTable.getColumnModel().getColumn(4).setPreferredWidth(250); // URL
-        eventTable.getColumnModel().getColumn(5).setPreferredWidth(50);  // Status
-        eventTable.getColumnModel().getColumn(6).setPreferredWidth(60);  // Req Len
-        eventTable.getColumnModel().getColumn(7).setPreferredWidth(60);  // Resp Len
-        eventTable.getColumnModel().getColumn(8).setPreferredWidth(120); // Process
-        eventTable.getColumnModel().getColumn(9).setPreferredWidth(60);  // Complete
-        
+        eventTable.getColumnModel().getColumn(2).setPreferredWidth(60);  // Proto
+        eventTable.getColumnModel().getColumn(3).setPreferredWidth(60);  // Method
+        eventTable.getColumnModel().getColumn(4).setPreferredWidth(150); // Host
+        eventTable.getColumnModel().getColumn(5).setPreferredWidth(250); // URL
+        eventTable.getColumnModel().getColumn(6).setPreferredWidth(50);  // Status
+        eventTable.getColumnModel().getColumn(7).setPreferredWidth(60);  // Req Len
+        eventTable.getColumnModel().getColumn(8).setPreferredWidth(60);  // Resp Len
+        eventTable.getColumnModel().getColumn(9).setPreferredWidth(120); // Process
+        eventTable.getColumnModel().getColumn(10).setPreferredWidth(60);  // Complete
+
         // Row sorter for filtering
         tableSorter = new TableRowSorter<>(tableModel);
         eventTable.setRowSorter(tableSorter);
@@ -326,10 +356,10 @@ public class ECaptureTab {
             
             if (existingRow != null && existingRow < tableModel.getRowCount()) {
                 // Update existing row (response arrived)
-                tableModel.setValueAt(pair.getStatusCode(), existingRow, 5);
-                tableModel.setValueAt(pair.getResponseLength(), existingRow, 7);
-                tableModel.setValueAt(pair.isComplete() ? "✓" : "...", existingRow, 9);
-                
+                tableModel.setValueAt(pair.getStatusCode(), existingRow, 6);
+                tableModel.setValueAt(pair.getResponseLength(), existingRow, 8);
+                tableModel.setValueAt(pair.isComplete() ? "✓" : "...", existingRow, 10);
+
             } else {
                 // Add new row
                 int rowNum = tableModel.getRowCount();
@@ -337,6 +367,7 @@ public class ECaptureTab {
                 java.util.Vector<Object> rowData = new java.util.Vector<>();
                 rowData.add(rowNum + 1);
                 rowData.add(pair.getTimestamp());
+                rowData.add(pair.getProtocol());
                 rowData.add(pair.getMethod());
                 rowData.add(pair.getHost());
                 rowData.add(pair.getUrl());
@@ -507,5 +538,76 @@ public class ECaptureTab {
      */
     public ContextMenuItemsProvider getContextMenuProvider() {
         return contextMenuProvider;
+    }
+
+    /**
+     * Get selected pairs based on table selection (multiple rows supported). If none selected, returns empty list.
+     */
+    public java.util.List<MatchedHttpPair> getSelectedPairsForExport() {
+        int[] selectedRows = eventTable.getSelectedRows();
+        java.util.List<MatchedHttpPair> result = new java.util.ArrayList<>();
+        if (selectedRows == null || selectedRows.length == 0) return result;
+        java.util.List<MatchedHttpPair> pairs = eventManager.getMatchedPairs();
+        for (int viewRow : selectedRows) {
+            int modelRow = eventTable.convertRowIndexToModel(viewRow);
+            if (modelRow >= 0 && modelRow < pairs.size()) {
+                result.add(pairs.get(modelRow));
+            }
+        }
+        return result;
+    }
+
+    private void onExportHarClicked() {
+        java.util.List<MatchedHttpPair> selected = getSelectedPairsForExport();
+        java.util.List<MatchedHttpPair> toExport = selected;
+        if (selected.isEmpty()) {
+            int sel = JOptionPane.showConfirmDialog(mainPanel, "No rows selected. Export all captured pairs?", "Export", JOptionPane.YES_NO_OPTION);
+            if (sel != JOptionPane.YES_OPTION) return;
+            toExport = eventManager.getMatchedPairs();
+        }
+        String defaultName = buildDefaultFilename(".har");
+        JFileChooser chooser = new JFileChooser();
+        chooser.setSelectedFile(new File(defaultName));
+        int res = chooser.showSaveDialog(mainPanel);
+        if (res != JFileChooser.APPROVE_OPTION) return;
+        File out = chooser.getSelectedFile();
+        try {
+            exportManager.exportAsHar(out, toExport, exportColumns);
+            JOptionPane.showMessageDialog(mainPanel, "Exported HAR: " + out.getAbsolutePath());
+        } catch (Exception ex) {
+            logging.logToError("Export HAR failed: " + ex.getMessage());
+            JOptionPane.showMessageDialog(mainPanel, "Export failed: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void onExportCsvClicked() {
+        java.util.List<MatchedHttpPair> selected = getSelectedPairsForExport();
+        java.util.List<MatchedHttpPair> toExport = selected;
+        if (selected.isEmpty()) {
+            int sel = JOptionPane.showConfirmDialog(mainPanel, "No rows selected. Export all captured pairs?", "Export", JOptionPane.YES_NO_OPTION);
+            if (sel != JOptionPane.YES_OPTION) return;
+            toExport = eventManager.getMatchedPairs();
+        }
+        String defaultName = buildDefaultFilename(".csv");
+        JFileChooser chooser = new JFileChooser();
+        chooser.setSelectedFile(new File(defaultName));
+        int res = chooser.showSaveDialog(mainPanel);
+        if (res != JFileChooser.APPROVE_OPTION) return;
+        File out = chooser.getSelectedFile();
+        try {
+            exportManager.exportAsExcel(out, toExport, exportColumns);
+            JOptionPane.showMessageDialog(mainPanel, "Exported CSV: " + out.getAbsolutePath());
+        } catch (Exception ex) {
+            logging.logToError("Export CSV failed: " + ex.getMessage());
+            JOptionPane.showMessageDialog(mainPanel, "Export failed: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private String buildDefaultFilename(String ext) {
+        String url = urlField.getText().trim();
+        if (url.isEmpty()) url = "ecapture";
+        String safe = url.replaceAll("[^a-zA-Z0-9._-]", "_");
+        String ts = new java.text.SimpleDateFormat("yyyyMMdd_HHmmss").format(new java.util.Date());
+        return safe + "_" + ts + ext;
     }
 }

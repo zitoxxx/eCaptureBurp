@@ -158,6 +158,38 @@ public class MatchedHttpPair {
         return port == 443 || port == 8443;
     }
     
+    /**
+     * Get protocol string: HTTP/1.x or HTTP/2 if detectable from events.
+     */
+    public String getProtocol() {
+        // Prefer request's eventType if available
+        if (request != null) {
+            switch (request.getEventType()) {
+                case HTTP2_REQUEST:
+                case AUTO_REQUEST:
+                    return "HTTP/2";
+                case HTTP1_REQUEST:
+                    return "HTTP/1.x";
+                default:
+                    break;
+            }
+        }
+        if (response != null) {
+            switch (response.getEventType()) {
+                case HTTP2_RESPONSE:
+                case AUTO_RESPONSE:
+                    return "HTTP/2";
+                case HTTP1_RESPONSE:
+                    return "HTTP/1.x";
+                default:
+                    break;
+            }
+        }
+        // fallback to port heuristic or content
+        if (isHttps()) return "HTTPS";
+        return "Unknown";
+    }
+
     @Override
     public String toString() {
         return String.format("MatchedHttpPair[uuid=%s, method=%s, url=%s, status=%s, complete=%s]",
